@@ -1,0 +1,9 @@
+# Build artifacts
+build/
+*.pyc
+__pycache__/
+.vscode/
+.idea/
+
+# Keep precompiled flashable binary, ignore large ELF debug symbols
+*.elf
