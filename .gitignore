@@ -7,3 +7,4 @@ __pycache__/
 
 # Keep precompiled flashable binary, ignore large ELF debug symbols
 *.elf
+
