@@ -78,11 +78,82 @@ static void on_ble_aed_mode_cmd(aed_mode_t mode)
 {
     aed_sensor_set_mode(mode);
     s_last_aed_state = -1;
+    LOG_INF("[BLE CMD] AED Mode set to: %s",
+            (mode == AED_MODE_DISABLED) ? "OFF (Disabled)" :
+            (mode == AED_MODE_HIP) ? "ON (Hip)" : "ON (Chest)");
+    if (ble_service_is_connected()) {
+        int8_t st = (mode == AED_MODE_DISABLED) ? AED_STATE_OFF : AED_STATE_ON;
+        CprPacket p = cpr_protocol_build_packet(
+            PTYPE_AED,
+            st,
+            s_packet_counter++,
+            s_device_id
+        );
+        ble_service_send_aed(&p);
+    }
 }
 
 static void on_ble_air_mode_cmd(bool active)
 {
     air_sensor_set_active(active);
+}
+
+static volatile bool s_shock_armed = false;
+
+/* Called when Mobile App turns Shock ON (Arm) or OFF (Disarm) */
+static void on_ble_shock_mode_cmd(bool armed)
+{
+    s_shock_armed = armed;
+    if (armed) {
+        LOG_INF("[BLE CMD] Shock ARMED (ON - Ready for delivery)");
+        if (ble_service_is_connected()) {
+            CprPacket p = cpr_protocol_build_packet(
+                PTYPE_AED,
+                AED_STATE_SHOCK_ARMED,
+                s_packet_counter++,
+                s_device_id
+            );
+            ble_service_send_aed(&p);
+        }
+    } else {
+        LOG_INF("[BLE CMD] Shock DISARMED (OFF)");
+        if (ble_service_is_connected()) {
+            CprPacket p = cpr_protocol_build_packet(
+                PTYPE_AED,
+                AED_STATE_SHOCK_DISARMED,
+                s_packet_counter++,
+                s_device_id
+            );
+            ble_service_send_aed(&p);
+        }
+    }
+}
+
+/* Called when physical shock is delivered by the external AED hardware */
+void cpr_on_hardware_shock_delivered(void)
+{
+    LOG_INF("============================================");
+    LOG_INF("   *** PHYSICAL AED SHOCK DELIVERED! ***    ");
+    LOG_INF("============================================");
+
+    /* 1. Trigger physical muscle spasm twitch on motor (180ms) */
+    haptic_shock_twitch();
+
+    /* 2. Resume normal sinus rhythm after successful defibrillation */
+    haptic_set_mode(HEART_NORMAL);
+    s_shock_armed = false;
+
+    /* 3. Notify connected mobile app that shock was delivered */
+    if (ble_service_is_connected()) {
+        CprPacket p = cpr_protocol_build_packet(
+            PTYPE_AED,
+            AED_STATE_SHOCK_DELIVERED,
+            s_packet_counter++,
+            s_device_id
+        );
+        ble_service_send_aed(&p);
+        ble_service_send_string("SHOCK:DELIVERED\n");
+    }
 }
 
 /* =============================================================================
@@ -209,7 +280,8 @@ int main(void)
         on_ble_heart_mode_cmd,
         on_ble_announce_cmd,
         on_ble_aed_mode_cmd,
-        on_ble_air_mode_cmd
+        on_ble_air_mode_cmd,
+        on_ble_shock_mode_cmd
     );
 
     /* 3. Initialize BLE GATT & Advertising */

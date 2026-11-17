@@ -39,8 +39,8 @@
 /* =============================================================================
  * BLE GATT & CHARACTERISTIC UUIDS (Nordic UART Service - NUS)
  * ============================================================================= */
-#define BLE_DEVICE_NAME         "CPR_106"
-#define MANIKIN_NAME_STR        "106"
+#define BLE_DEVICE_NAME         "CPR_101"
+#define MANIKIN_NAME_STR        "101"
 #define MANIKIN_TYPE_DEFAULT    1
 
 /* Nordic UART Service 128-bit UUIDs */
@@ -122,6 +122,13 @@ typedef enum {
     AED_MODE_HIP      = 1, /* A1: Hip AED Pad */
     AED_MODE_CHEST    = 2  /* A2: Chest AED Pad */
 } aed_mode_t;
+
+/* AED Telemetry & Shock State Codes (Sent in PTYPE_AED packet depth byte) */
+#define AED_STATE_OFF             0   /* Pads detached / AED disabled */
+#define AED_STATE_ON              1   /* Pads attached (Chest or Hip) */
+#define AED_STATE_SHOCK_DELIVERED 2   /* Shock button pressed / delivered */
+#define AED_STATE_SHOCK_ARMED     3   /* Shock armed by app (ready for shock) */
+#define AED_STATE_SHOCK_DISARMED  4   /* Shock disarmed */
 
 typedef enum {
     HEART_STOPPED     = 0,

@@ -27,6 +27,7 @@ static ble_heart_mode_callback_t       s_heart_cb    = NULL;
 static ble_announce_request_callback_t s_announce_cb = NULL;
 static ble_aed_mode_callback_t         s_aed_cb      = NULL;
 static ble_air_mode_callback_t         s_air_cb      = NULL;
+static ble_shock_mode_callback_t        s_shock_cb    = NULL;
 
 /* Nordic UART Service (NUS) UUIDs */
 static struct bt_uuid_128 nus_uuid    = BT_UUID_INIT_128(BT_UUID_NUS_SERVICE_VAL);
@@ -44,6 +45,26 @@ static ssize_t on_nus_rx_write(struct bt_conn *conn,
     const char *cmd_buf = (const char *)buf;
     if (len < 1) return len;
 
+    /* Multi-character ASCII string commands support */
+    if (len >= 6 && memcmp(cmd_buf, "AED_ON", 6) == 0) {
+        if (s_aed_cb) s_aed_cb(AED_MODE_HIP);
+        return len;
+    }
+    if (len >= 7 && memcmp(cmd_buf, "AED_OFF", 7) == 0) {
+        if (s_aed_cb) s_aed_cb(AED_MODE_DISABLED);
+        return len;
+    }
+    if ((len >= 8 && memcmp(cmd_buf, "SHOCK_ON", 8) == 0) ||
+        (len >= 9 && memcmp(cmd_buf, "SHOCK_ARM", 9) == 0)) {
+        if (s_shock_cb) s_shock_cb(true);
+        return len;
+    }
+    if ((len >= 9 && memcmp(cmd_buf, "SHOCK_OFF", 9) == 0) ||
+        (len >= 12 && memcmp(cmd_buf, "SHOCK_DISARM", 12) == 0)) {
+        if (s_shock_cb) s_shock_cb(false);
+        return len;
+    }
+
     const char cmd = cmd_buf[0];
     switch (cmd) {
         case 'C':
@@ -54,7 +75,7 @@ static ssize_t on_nus_rx_write(struct bt_conn *conn,
             break;
 
         case 'A': {
-            aed_mode_t mode = AED_MODE_DISABLED;
+            aed_mode_t mode = AED_MODE_HIP;
             if (len >= 2) {
                 if (cmd_buf[1] == '2') {
                     mode = AED_MODE_CHEST;
@@ -69,6 +90,30 @@ static ssize_t on_nus_rx_write(struct bt_conn *conn,
             }
             break;
         }
+
+        /* Shock commands from App: Shock ON (Arm) / Shock OFF (Disarm) */
+        case 'K': {
+            bool arm = true;
+            if (len >= 2 && cmd_buf[1] == '0') {
+                arm = false;
+            }
+            if (s_shock_cb) {
+                s_shock_cb(arm);
+            }
+            break;
+        }
+
+        case 'E': /* Enable / Arm Shock (ON) */
+            if (s_shock_cb) {
+                s_shock_cb(true);
+            }
+            break;
+
+        case 'D': /* Disable / Disarm Shock (OFF) */
+            if (s_shock_cb) {
+                s_shock_cb(false);
+            }
+            break;
 
         case 'M': {
             bool enable = true;
@@ -218,6 +263,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     if (s_heart_cb) s_heart_cb(HEART_STOPPED);
     if (s_aed_cb)   s_aed_cb(AED_MODE_DISABLED);
     if (s_air_cb)   s_air_cb(false);
+    if (s_shock_cb) s_shock_cb(false);
 
     /* In Zephyr, the stack still holds a reference to the conn object inside disconnected().
      * Restarting advertising synchronously here can fail with -ENOMEM when connection slots are constrained.
@@ -241,12 +287,14 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 void ble_service_register_callbacks(ble_heart_mode_callback_t heart_cb,
                                     ble_announce_request_callback_t announce_cb,
                                     ble_aed_mode_callback_t aed_cb,
-                                    ble_air_mode_callback_t air_cb)
+                                    ble_air_mode_callback_t air_cb,
+                                    ble_shock_mode_callback_t shock_cb)
 {
     s_heart_cb    = heart_cb;
     s_announce_cb = announce_cb;
     s_aed_cb      = aed_cb;
     s_air_cb      = air_cb;
+    s_shock_cb    = shock_cb;
 }
 
 int ble_service_init(void)
@@ -313,6 +361,12 @@ int ble_service_send_aed(const CprPacket *pkt)
 int ble_service_send_air(const CprPacket *pkt)
 {
     return send_nus_data(pkt, sizeof(CprPacket));
+}
+
+int ble_service_send_string(const char *str)
+{
+    if (!str) return -EINVAL;
+    return send_nus_data(str, (uint16_t)strlen(str));
 }
 
 void ble_service_set_battery_level(uint8_t percentage)

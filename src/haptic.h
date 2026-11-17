@@ -24,6 +24,8 @@ void haptic_set_duty(uint8_t percent);
 
 void haptic_stop(void);
 
+void haptic_shock_twitch(void);
+
 void haptic_run_cycle(void);
 
 #ifdef __cplusplus

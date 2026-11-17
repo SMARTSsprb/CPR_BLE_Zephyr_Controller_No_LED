@@ -60,6 +60,14 @@ void haptic_stop(void)
     haptic_set_duty(0);
 }
 
+void haptic_shock_twitch(void)
+{
+    /* High-energy 180 ms muscle twitch pulse */
+    haptic_set_duty(MOTOR_DUTY_MAX_PERCENT);
+    k_msleep(180);
+    haptic_stop();
+}
+
 void haptic_set_mode(heart_mode_t mode)
 {
     k_mutex_lock(&s_haptic_mutex, K_FOREVER);
