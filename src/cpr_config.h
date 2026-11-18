@@ -39,8 +39,8 @@
 /* =============================================================================
  * BLE GATT & CHARACTERISTIC UUIDS (Nordic UART Service - NUS)
  * ============================================================================= */
-#define BLE_DEVICE_NAME         "CPR_101"
-#define MANIKIN_NAME_STR        "101"
+#define BLE_DEVICE_NAME         "CPR_106"
+#define MANIKIN_NAME_STR        "106"
 #define MANIKIN_TYPE_DEFAULT    1
 
 /* Nordic UART Service 128-bit UUIDs */
