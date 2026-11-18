@@ -38,3 +38,14 @@ esptool --chip esp32c3 -p COM7 -b 921600 write_flash 0x0 bin\zephyr.bin
 # Monitor serial output
 python -m serial.tools.miniterm COM7 115200
 ```
+
+---
+
+## 4. Companion External AED Shock Controller
+
+The external wireless AED shock unit operates via ESP-NOW and features a 5-mode clinical resuscitation RGB indication system:
+
+- **Repository:** [SMARTSsprb/CPR_Zephyr_AED_Controller](https://github.com/SMARTSsprb/CPR_Zephyr_AED_Controller)
+- **Protocol:** ESP-NOW 2.4 GHz raw RF packets (`AED_ON`, `SHOCK_ON`, `SHOCK_OFF`, `AED_OFF`)
+- **Target Manikin MAC:** `E8:3D:C1:82:1B:F0` (Wi-Fi Channel 1)
+
