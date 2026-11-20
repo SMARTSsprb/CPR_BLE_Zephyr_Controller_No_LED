@@ -1,0 +1,10 @@
+mainmenu "CPR Manikin"
+
+config CPR_AED_BRIDGE
+	bool "Enable assigned trainer AED client"
+	depends on BT_CENTRAL && BT_GATT_CLIENT && BT_SETTINGS && BT_SMP
+	depends on BT_MAX_CONN >= 2
+	help
+	  Add an independent outgoing BLE link to a selected trainer AED.
+
+source "Kconfig.zephyr"

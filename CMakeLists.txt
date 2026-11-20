@@ -7,6 +7,9 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(cpr_ble_zephyr_controller_no_led)
 
 target_include_directories(app PRIVATE src)
+if(CONFIG_CPR_AED_BRIDGE)
+    target_sources(app PRIVATE src/aed_client.c)
+endif()
 
 target_sources(app PRIVATE
     src/main.c
