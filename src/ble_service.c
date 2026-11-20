@@ -5,6 +5,10 @@
  */
 
 #include "ble_service.h"
+#include "aed_client.h"
+#include <string.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/bluetooth/bluetooth.h>
@@ -18,7 +22,24 @@ LOG_MODULE_REGISTER(ble_service, LOG_LEVEL_INF);
 static struct bt_conn *default_conn = NULL;
 static volatile bool s_client_connected = false;
 static volatile bool s_is_advertising = false;
-static bool s_tx_notify_enabled = false;
+static struct k_spinlock peer_lock;
+static struct k_spinlock cache_lock;
+
+struct bt_conn *ble_app_ref(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&peer_lock);
+    struct bt_conn *app = default_conn ? bt_conn_ref(default_conn) : NULL;
+    k_spin_unlock(&peer_lock, key);
+    return app;
+}
+
+bool ble_is_app(struct bt_conn *conn)
+{
+    k_spinlock_key_t key = k_spin_lock(&peer_lock);
+    bool match = conn && conn == default_conn;
+    k_spin_unlock(&peer_lock, key);
+    return match;
+}
 
 static struct k_work_delayable s_adv_work;
 static void adv_work_handler(struct k_work *work);
@@ -43,7 +64,11 @@ static ssize_t on_nus_rx_write(struct bt_conn *conn,
                                uint16_t offset, uint8_t flags)
 {
     const char *cmd_buf = (const char *)buf;
+    if (!ble_is_app(conn)) return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
     if (len < 1) return len;
+#ifdef CONFIG_CPR_AED_BRIDGE
+    if (cmd_buf[0] == '@') return aed_client_command(conn, buf, len, offset);
+#endif
 
     /* Multi-character ASCII string commands support */
     if (len >= 6 && memcmp(cmd_buf, "AED_ON", 6) == 0) {
@@ -165,13 +190,16 @@ static ssize_t on_nus_tx_read(struct bt_conn *conn,
                               void *buf, uint16_t len,
                               uint16_t offset)
 {
-    return bt_gatt_attr_read(conn, attr, buf, len, offset, s_tx_buffer, s_tx_len);
+    if (!ble_is_app(conn)) return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
+    k_spinlock_key_t key = k_spin_lock(&cache_lock);
+    ssize_t n = bt_gatt_attr_read(conn, attr, buf, len, offset, s_tx_buffer, s_tx_len);
+    k_spin_unlock(&cache_lock, key);
+    return n;
 }
 
 static void on_nus_tx_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
-    s_tx_notify_enabled = (value == BT_GATT_CCC_NOTIFY);
-    LOG_INF("NUS TX CCC notification %s", s_tx_notify_enabled ? "enabled" : "disabled");
+    LOG_DBG("NUS TX CCC changed: %u", value);
 }
 
 /* GATT Service Declaration */
@@ -236,6 +264,8 @@ static void adv_work_handler(struct k_work *work)
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+    struct bt_conn_info info;
+    if (bt_conn_get_info(conn, &info) || info.role != BT_CONN_ROLE_PERIPHERAL) return;
     if (err) {
         LOG_ERR("BLE Connection failed (err 0x%02x)", err);
         s_is_advertising = false;
@@ -243,22 +273,32 @@ static void connected(struct bt_conn *conn, uint8_t err)
         return;
     }
     k_work_cancel_delayable(&s_adv_work);
+    k_spinlock_key_t key = k_spin_lock(&peer_lock);
+    if (default_conn) {
+        k_spin_unlock(&peer_lock, key);
+        bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        return;
+    }
     default_conn = bt_conn_ref(conn);
     s_client_connected = true;
+    k_spin_unlock(&peer_lock, key);
     s_is_advertising = false;
     LOG_INF(">>> BLE Client connected! (Just Works bonding active)");
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-    LOG_INF("<<< BLE Client disconnected (reason 0x%02x)", reason);
-    if (default_conn) {
-        bt_conn_unref(default_conn);
-        default_conn = NULL;
+    k_spinlock_key_t key = k_spin_lock(&peer_lock);
+    if (conn != default_conn) {
+        k_spin_unlock(&peer_lock, key);
+        return;
     }
+    default_conn = NULL;
     s_client_connected = false;
+    k_spin_unlock(&peer_lock, key);
+    bt_conn_unref(conn);
+    LOG_INF("App disconnected (reason 0x%02x)", reason);
     s_is_advertising = false;
-    s_tx_notify_enabled = false;
 
     if (s_heart_cb) s_heart_cb(HEART_STOPPED);
     if (s_aed_cb)   s_aed_cb(AED_MODE_DISABLED);
@@ -274,8 +314,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 static void recycled(void)
 {
-    LOG_INF("BLE Connection object freed & recycled. Triggering advertising immediately.");
-    k_work_reschedule(&s_adv_work, K_NO_WAIT);
+    ble_service_ensure_advertising();
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -307,6 +346,11 @@ int ble_service_init(void)
         return err;
     }
 
+#ifdef CONFIG_CPR_AED_BRIDGE
+    err = settings_load();
+    if (!err) err = aed_client_init();
+    if (err) LOG_ERR("AED bridge unavailable (%d); app link remains enabled", err);
+#endif
     LOG_INF("Bluetooth initialized successfully");
 
     return ble_service_start_advertising();
@@ -330,17 +374,25 @@ void ble_service_ensure_advertising(void)
     }
 }
 
-static int send_nus_data(const void *data, uint16_t len)
+int ble_app_send(struct bt_conn *app, const void *data, uint16_t len)
 {
-    if (!s_client_connected || !s_tx_notify_enabled) {
-        return -ENOTCONN;
-    }
-
+    const struct bt_gatt_attr *tx = &nus_svc.attrs[4];
+    if (!ble_is_app(app) || !bt_gatt_is_subscribed(app, tx, BT_GATT_CCC_NOTIFY)) return -ENOTCONN;
+    if (len > sizeof(s_tx_buffer)) return -EMSGSIZE;
+    k_spinlock_key_t key = k_spin_lock(&cache_lock);
     memcpy(s_tx_buffer, data, len);
     s_tx_len = len;
+    k_spin_unlock(&cache_lock, key);
+    return bt_gatt_notify(app, tx, data, len);
+}
 
-    /* Index 3 is TX Characteristic Value in nus_svc */
-    return bt_gatt_notify(default_conn, &nus_svc.attrs[3], data, len);
+static int send_nus_data(const void *data, uint16_t len)
+{
+    struct bt_conn *app = ble_app_ref();
+    if (!app) return -ENOTCONN;
+    int err = ble_app_send(app, data, len);
+    bt_conn_unref(app);
+    return err;
 }
 
 int ble_service_send_announce(const AnnouncePacket *pkt)

@@ -31,7 +31,17 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define PRIORITY_AIR        6   /* 50 Hz pressure telemetry */
 
 static uint8_t  s_device_id[3]   = {0x82, 0x30, 0x9A}; /* Derived from BT MAC */
-static uint16_t s_packet_counter = 0;
+static atomic_t s_packet_counter;
+
+#ifdef CONFIG_CPR_AED_BRIDGE
+#include "aed_client.h"
+void cpr_relay_aed(struct bt_conn *app, int8_t state)
+{
+    CprPacket pkt = cpr_protocol_build_packet(PTYPE_AED, state,
+        (uint16_t)atomic_inc(&s_packet_counter), s_device_id);
+    ble_app_send(app, &pkt, sizeof(pkt));
+}
+#endif
 static int8_t   s_last_aed_state = -1;
 static volatile bool s_announce_pending = false;
 
@@ -44,7 +54,7 @@ static void on_compression_event(depth_result_t result)
         CprPacket cp = cpr_protocol_build_packet(
             PTYPE_COMPRESSION,
             (int8_t)result,
-            s_packet_counter++,
+            (uint16_t)atomic_inc(&s_packet_counter),
             s_device_id
         );
         ble_service_send_compression(&cp);
@@ -57,7 +67,7 @@ static void on_recoil_event(depth_result_t result)
         CprPacket cp = cpr_protocol_build_packet(
             PTYPE_COMPRESSION,
             (int8_t)result,
-            s_packet_counter++,
+            (uint16_t)atomic_inc(&s_packet_counter),
             s_device_id
         );
         ble_service_send_compression(&cp);
@@ -86,7 +96,7 @@ static void on_ble_aed_mode_cmd(aed_mode_t mode)
         CprPacket p = cpr_protocol_build_packet(
             PTYPE_AED,
             st,
-            s_packet_counter++,
+            (uint16_t)atomic_inc(&s_packet_counter),
             s_device_id
         );
         ble_service_send_aed(&p);
@@ -110,7 +120,7 @@ static void on_ble_shock_mode_cmd(bool armed)
             CprPacket p = cpr_protocol_build_packet(
                 PTYPE_AED,
                 AED_STATE_SHOCK_ARMED,
-                s_packet_counter++,
+                (uint16_t)atomic_inc(&s_packet_counter),
                 s_device_id
             );
             ble_service_send_aed(&p);
@@ -121,7 +131,7 @@ static void on_ble_shock_mode_cmd(bool armed)
             CprPacket p = cpr_protocol_build_packet(
                 PTYPE_AED,
                 AED_STATE_SHOCK_DISARMED,
-                s_packet_counter++,
+                (uint16_t)atomic_inc(&s_packet_counter),
                 s_device_id
             );
             ble_service_send_aed(&p);
@@ -148,7 +158,7 @@ void cpr_on_hardware_shock_delivered(void)
         CprPacket p = cpr_protocol_build_packet(
             PTYPE_AED,
             AED_STATE_SHOCK_DELIVERED,
-            s_packet_counter++,
+            (uint16_t)atomic_inc(&s_packet_counter),
             s_device_id
         );
         ble_service_send_aed(&p);
@@ -206,7 +216,7 @@ static void aed_thread_entry(void *p1, void *p2, void *p3)
                     CprPacket p = cpr_protocol_build_packet(
                         PTYPE_AED,
                         state,
-                        s_packet_counter++,
+                        (uint16_t)atomic_inc(&s_packet_counter),
                         s_device_id
                     );
                     ble_service_send_aed(&p);
@@ -242,7 +252,7 @@ static void air_thread_entry(void *p1, void *p2, void *p3)
                     CprPacket p = cpr_protocol_build_packet(
                         PTYPE_AIR,
                         is_air ? 1 : 0,
-                        s_packet_counter++,
+                        (uint16_t)atomic_inc(&s_packet_counter),
                         s_device_id
                     );
                     ble_service_send_air(&p);
@@ -301,7 +311,7 @@ int main(void)
             s_announce_pending = false;
             if (ble_service_is_connected()) {
                 AnnouncePacket ap = cpr_protocol_build_announce(
-                    s_packet_counter++,
+                    (uint16_t)atomic_inc(&s_packet_counter),
                     s_device_id,
                     batt_pct
                 );
