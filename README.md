@@ -6,6 +6,8 @@ Ultra-low-latency, deterministic CPR Training Monitor firmware running on **Zeph
 
 ## 1. System Overview & Dual-Role BLE Architecture
 
+![CPR Training Ecosystem — Overall System & AED Flow](aed_overall_system_flow.png)
+
 The CPR Manikin controller operates simultaneously as a **BLE Peripheral (GATT Server)** for the Mobile Training Application and as a **BLE Central (GATT Client)** for assigned external AED Shock Controllers:
 
 ```
